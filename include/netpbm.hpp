@@ -28,6 +28,8 @@ std::ostream& operator<<(std::ostream& out, const pixel_t& pixel) {
              << static_cast<int>(pixel.b) << ')';
 }
 
+namespace detail {
+
 std::string next_token(std::istream& in) {
   std::string token;
   // get first non-space out-of-comment character
@@ -50,7 +52,8 @@ std::string next_token(std::istream& in) {
   return token;
 }
 
-int to_int(const std::string& token) {
+int next_int(std::istream& in) {
+  std::string token = next_token(in);
   size_t processed;
   int value = std::stoi(token, &processed);
   if (processed != token.size())
@@ -59,24 +62,6 @@ int to_int(const std::string& token) {
   return value;
 }
 
-int next_int(std::istream& in) {
-  std::string token = next_token(in);
-  return to_int(token);
-}
-
-std::istream& get_next_byte(std::istream& in, int& b) {
-  std::string token = next_token(in);
-  if (!token.empty()) {
-    b = to_int(token);
-    if (b < 0 || b > 255)
-      throw std::out_of_range(
-          "Byte " + std::to_string(b) + " not in range [0,255]");
-  }
-  return in;
-}
-
-std::istream& get_next_byte(std::istream& in, char& b) {
-  return in.get(b);
 }
 
 class img_t {
@@ -91,17 +76,17 @@ class img_t {
       if (!in || (magic!="P3"&&magic!="P6"))
         throw std::invalid_argument(
             "File " + filename + " is not a proper netbpm file");
-      size_t width = next_int(in);
-      size_t height = next_int(in);
-      size_t depth = next_int(in);
+      size_t width = detail::next_int(in);
+      size_t height = detail::next_int(in);
+      size_t depth = detail::next_int(in);
       if (depth != 255)
         throw std::runtime_error(
             "Depth of " + std::to_string(depth) + " not allowed");
       img_t image(width, height);
       if (magic == "P3")
-        image.load_data<int>(in);
+        image.load_ascii(in);
       else // if (magic == "P6")
-        image.load_data<char>(in);
+        image.load_binary(in);
       return image;
     }
 
@@ -149,28 +134,22 @@ class img_t {
 
   private:
 
-    template <class byte_t>
-    void load_data(std::ifstream& in) {
-      size_t expected_bytes = m_data.size()*3;
-      size_t read_bytes = 0;
-      int index = 0;
-      int channel = 0;
-      pixel_t next_pixel;
-      byte_t b;
-      while (read_bytes < expected_bytes && get_next_byte(in, b)) {
-        ++read_bytes;
-        next_pixel[channel] = static_cast<unsigned char>(b);
-        if (channel == 2) {
-          m_data[index] = next_pixel;
-          ++index;
-          channel = 0;
-        }
-        else
-          ++channel;
-      }
-      if (read_bytes != expected_bytes)
+    void load_binary(std::ifstream& in) {
+      size_t expected_bytes = m_data.size()*sizeof(pixel_t);
+      in.read(reinterpret_cast<char*>(m_data.data()), expected_bytes);
+      size_t read = in.gcount();
+      if (read != expected_bytes) {
         throw runtime_error("Expected " + to_string(expected_bytes) +
-            " bytes, received " + to_string(read_bytes) + " instead");
+            " bytes, received " + to_string(read) + " instead");
+      }
+    }
+
+    void load_ascii(std::ifstream& in) {
+      for (pixel_t& pixel : m_data) {
+        pixel.r = detail::next_int(in);
+        pixel.g = detail::next_int(in);
+        pixel.b = detail::next_int(in);
+      }
     }
  
     size_t m_width, m_height;
@@ -178,18 +157,4 @@ class img_t {
 };
 
 } // namespace ash
-
-namespace std {
-
-template<>
-struct hash<ash::pixel_t> {
-  size_t operator()(const ash::pixel_t& pixel) const {
-    size_t result = pixel.r;
-    result = (result<<8)|pixel.g;
-    result = (result<<8)|pixel.b;
-    return result;
-  }
-};
-
-}
 
